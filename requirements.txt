@@ -1,0 +1,14 @@
+tensorflow-macos
+tensorflow-metal
+torch
+torchvision
+opencv-python
+albumentations
+matplotlib
+seaborn
+scikit-learn
+pandas
+jupyter
+streamlit
+tqdm
+Pillow
