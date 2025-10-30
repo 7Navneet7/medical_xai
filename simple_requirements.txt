@@ -1,0 +1,11 @@
+numpy==1.26.4
+tensorflow-macos==2.16.2
+tensorflow-metal==1.1.0
+opencv-python==4.8.1.78
+albumentations==1.4.16
+streamlit==1.36.0
+matplotlib==3.7.5
+seaborn==0.13.2
+scikit-learn==1.4.2
+pandas==2.2.2
+pillow==10.3.0

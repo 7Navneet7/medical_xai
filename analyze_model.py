@@ -6,9 +6,37 @@ from sklearn.metrics import classification_report, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# --- New function to evaluate performance with a custom threshold ---
+def evaluate_with_threshold(true_labels, probabilities, threshold, target_names):
+    """
+    Recalculates predictions, metrics, and generates a confusion matrix 
+    using a specified decision threshold for the positive class (PNEUMONIA, index 1).
+    """
+    # 1. Apply the new threshold
+    # If the PNEUMONIA probability (prob) is >= threshold, the prediction is 1 (PNEUMONIA)
+    # Otherwise, the prediction is 0 (NORMAL)
+    threshold_predictions = (probabilities >= threshold).astype(int)
+
+    # 2. Calculate accuracy
+    accuracy = np.mean(threshold_predictions == np.array(true_labels))
+    
+    # 3. Classification report
+    report = classification_report(true_labels, threshold_predictions, 
+                                   target_names=target_names, output_dict=True)
+    
+    # 4. Confusion matrix
+    cm = confusion_matrix(true_labels, threshold_predictions)
+    
+    return accuracy, report, cm
+
 def analyze_model_performance():
     print("📊 Analyzing Model Performance")
     print("=" * 40)
+    
+    # --- Configuration ---
+    # The current threshold is 0.5. We are testing a higher threshold to reduce False Positives.
+    TARGET_THRESHOLD = 0.75
+    TARGET_NAMES = ['NORMAL', 'PNEUMONIA']
     
     # Load model
     model = tf.keras.models.load_model("models/best_model.h5")
@@ -26,58 +54,71 @@ def analyze_model_performance():
     
     print(f"Testing on {len(all_test_paths)} images...")
     
-    predictions = []
-    confidences = []
+    # We will store the raw PNEUMONIA probability (index 1) for threshold testing
+    pneumonia_probabilities = []
     
-    for i, (path, true_label) in enumerate(zip(all_test_paths, all_test_labels)):
+    for i, path in enumerate(all_test_paths):
         try:
             image = preprocessor.load_and_preprocess_image(path, augment=False)
             if image is not None:
+                # pred is a 2-element array: [P(NORMAL), P(PNEUMONIA)]
                 pred = model.predict(np.expand_dims(image, axis=0), verbose=0)[0]
-                pred_class = np.argmax(pred)
-                confidence = pred[pred_class]
                 
-                predictions.append(pred_class)
-                confidences.append(confidence)
+                # Store P(PNEUMONIA)
+                pneumonia_probabilities.append(pred[1])
                 
                 if (i + 1) % 20 == 0:
                     print(f"Processed {i+1}/{len(all_test_paths)} images")
         except Exception as e:
             print(f"Error processing {path}: {e}")
-            predictions.append(-1)  # Error marker
-            confidences.append(0)
+            pneumonia_probabilities.append(np.nan) # Marker for error
     
     # Filter out errors
-    valid_indices = [i for i, pred in enumerate(predictions) if pred != -1]
-    valid_predictions = [predictions[i] for i in valid_indices]
+    valid_indices = [i for i, prob in enumerate(pneumonia_probabilities) if not np.isnan(prob)]
+    valid_probabilities = np.array([pneumonia_probabilities[i] for i in valid_indices])
     valid_true = [all_test_labels[i] for i in valid_indices]
-    valid_confidences = [confidences[i] for i in valid_indices]
     
-    print(f"\n✅ Successfully processed {len(valid_predictions)} images")
+    print(f"\n✅ Successfully processed {len(valid_probabilities)} images")
     
-    # Calculate accuracy
-    accuracy = np.mean(np.array(valid_predictions) == np.array(valid_true))
-    print(f"🎯 Sample Test Accuracy: {accuracy:.4f}")
-    print(f"🎯 Average Confidence: {np.mean(valid_confidences):.4f}")
+    # --- 1. Evaluate Performance at Default Threshold (0.5) ---
+    accuracy_05, report_05, cm_05 = evaluate_with_threshold(
+        valid_true, valid_probabilities, 0.5, TARGET_NAMES
+    )
     
-    # Classification report
+    print("\n--- BASELINE PERFORMANCE (THRESHOLD 0.5) ---")
+    print(f"🎯 Sample Test Accuracy: {accuracy_05:.4f}")
     print("\n📋 Classification Report:")
-    print(classification_report(valid_true, valid_predictions, 
-                              target_names=['NORMAL', 'PNEUMONIA']))
+    print(classification_report(valid_true, (valid_probabilities >= 0.5).astype(int), 
+                              target_names=TARGET_NAMES))
     
-    # Confusion matrix
-    cm = confusion_matrix(valid_true, valid_predictions)
+    # --- 2. Evaluate Performance at Target Threshold (e.g., 0.75) ---
+    accuracy_target, report_target, cm_target = evaluate_with_threshold(
+        valid_true, valid_probabilities, TARGET_THRESHOLD, TARGET_NAMES
+    )
+    
+    print(f"\n--- RECALIBRATED PERFORMANCE (THRESHOLD {TARGET_THRESHOLD:.2f}) ---")
+    print(f"🎯 Sample Test Accuracy: {accuracy_target:.4f}")
+    print(f"NORMAL Recall (Specificity): {report_target['NORMAL']['recall']:.4f}")
+    print(f"PNEUMONIA Recall (Sensitivity): {report_target['PNEUMONIA']['recall']:.4f}")
+    
+    print("\n📋 Classification Report:")
+    print(classification_report(valid_true, (valid_probabilities >= TARGET_THRESHOLD).astype(int), 
+                              target_names=TARGET_NAMES))
+    
+    # --- 3. Plot Recalibrated Confusion Matrix ---
     plt.figure(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=['NORMAL', 'PNEUMONIA'],
-                yticklabels=['NORMAL', 'PNEUMONIA'])
-    plt.title('Confusion Matrix')
+    sns.heatmap(cm_target, annot=True, fmt='d', cmap='Blues',
+                xticklabels=TARGET_NAMES,
+                yticklabels=TARGET_NAMES)
+    plt.title(f'Confusion Matrix (Threshold: {TARGET_THRESHOLD:.2f})')
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
-    plt.savefig('results/confusion_matrix.png', dpi=300, bbox_inches='tight')
+    
+    filename = f'results/confusion_matrix_t{int(TARGET_THRESHOLD*100)}.png'
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
     plt.show()
     
-    print("💾 Confusion matrix saved to results/confusion_matrix.png")
+    print(f"💾 Recalibrated confusion matrix saved to {filename}")
 
 if __name__ == "__main__":
     analyze_model_performance()
