@@ -1,15 +1,29 @@
-# Streamlit Cloud compatible (Linux)
-streamlit
-tensorflow==2.12.0
-torch
-torchvision
-opencv-python-headless
-albumentations
-matplotlib
-seaborn
-scikit-learn
-pandas
-tqdm
-Pillow
-shap
-lime
+# Universal requirements for Mac and Cloud
+streamlit>=1.28.0
+
+# TensorFlow - will work on both, but slower on Mac
+tensorflow>=2.15.0  # Works on both, but no Metal acceleration on Mac
+
+# PyTorch
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Computer Vision
+opencv-python>=4.8.0  # Full version works everywhere
+albumentations>=1.3.0
+Pillow>=10.0.0
+
+# Data Science & ML
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# XAI Libraries
+shap>=0.43.0
+lime>=0.2.0.1
+
+# Utilities
+tqdm>=4.65.0
+scipy>=1.11.0
