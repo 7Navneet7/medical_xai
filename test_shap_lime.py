@@ -10,165 +10,29 @@ import lime.lime_image
 from lime import submodular_pick
 from skimage.segmentation import mark_boundaries
 
-class MedicalXAIEngine:
-    def __init__(self, model, class_names):
+class EnhancedMedicalXAIEngine:
+    def __init__(self, model, class_names, background_size=50):
         self.model = model
         self.class_names = class_names
-    
-    def grad_cam(self, image: np.ndarray, layer_name: str = None, class_idx: int = None) -> Tuple[np.ndarray, int]:
-        if layer_name is None:
-            for layer in self.model.layers[::-1]:
-                if 'conv' in layer.name:
-                    layer_name = layer.name
-                    break
-            if layer_name is None:
-                layer_name = self.model.layers[-2].name
-        
-        grad_model = tf.keras.models.Model(
-            inputs=[self.model.inputs],
-            outputs=[self.model.get_layer(layer_name).output, self.model.output]
-        )
-        
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(np.expand_dims(image, axis=0))
-            if class_idx is None:
-                class_idx = tf.argmax(predictions[0])
-            loss = predictions[:, class_idx]
-        
-        grads = tape.gradient(loss, conv_outputs)
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        
-        conv_outputs = conv_outputs[0]
-        heatmap = tf.reduce_sum(tf.multiply(pooled_grads, conv_outputs), axis=-1)
-        
-        heatmap = np.maximum(heatmap.numpy(), 0)
-        heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap) + 1e-8)
-        
-        if hasattr(class_idx, 'numpy'):
-            class_idx = class_idx.numpy()
-        
-        return heatmap, int(class_idx)
-    
-    def overlay_heatmap(self, heatmap: np.ndarray, original_image: np.ndarray, 
-                       alpha: float = 0.4, colormap: int = cv2.COLORMAP_JET) -> np.ndarray:
-        heatmap_resized = cv2.resize(heatmap, (original_image.shape[1], original_image.shape[0]))
-        
-        heatmap_colored = cv2.applyColorMap(np.uint8(255 * heatmap_resized), colormap)
-        heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
-        
-        if original_image.dtype != np.uint8:
-            original_image_uint8 = (original_image * 255).astype(np.uint8)
-        else:
-            original_image_uint8 = original_image
-        
-        overlayed = cv2.addWeighted(original_image_uint8, 1 - alpha, heatmap_colored, alpha, 0)
-        
-        return overlayed
-    
-    def generate_explanation_report(self, image_path: str, save_dir: str = "results/explanations/"):
-        try:
-            image = cv2.imread(image_path)
-            if image is None:
-                print(f"❌ Could not load image: {image_path}")
-                return None
-                
-            original_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            processed_image = cv2.resize(original_image, (224, 224))
-            processed_image = processed_image.astype(np.float32) / 255.0
-            
-            pred = self.model.predict(np.expand_dims(processed_image, axis=0), verbose=0)[0]
-            predicted_class = np.argmax(pred)
-            confidence = pred[predicted_class]
-            
-            print(f"📊 Prediction: {self.class_names[predicted_class]} ({confidence:.3f})")
-            
-            heatmap, _ = self.grad_cam(processed_image, class_idx=predicted_class)
-            
-            overlay = self.overlay_heatmap(heatmap, original_image)
-            
-            self._create_explanation_visualization(
-                original_image, processed_image, heatmap, overlay,
-                self.class_names[predicted_class], confidence, 
-                image_path, save_dir
-            )
-            
-            return {
-                'prediction': self.class_names[predicted_class],
-                'confidence': float(confidence),
-                'all_probabilities': {name: float(prob) for name, prob in zip(self.class_names, pred)},
-                'heatmap': heatmap
-            }
-            
-        except Exception as e:
-            print(f"❌ Error generating explanation: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-    
-    def _create_explanation_visualization(self, original, processed, heatmap, overlay, 
-                                        prediction, confidence, image_path, save_dir):
-        os.makedirs(save_dir, exist_ok=True)
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
-        axes[0,0].imshow(original)
-        axes[0,0].set_title('Original Chest X-Ray', fontsize=14, fontweight='bold')
-        axes[0,0].axis('off')
-        
-        axes[0,1].imshow(processed)
-        axes[0,1].set_title('Preprocessed Image', fontsize=14, fontweight='bold')
-        axes[0,1].axis('off')
-        
-        im = axes[1,0].imshow(heatmap, cmap='jet')
-        axes[1,0].set_title('Grad-CAM Heatmap', fontsize=14, fontweight='bold')
-        axes[1,0].axis('off')
-        plt.colorbar(im, ax=axes[1,0], fraction=0.046, pad=0.04)
-        
-        axes[1,1].imshow(overlay)
-        axes[1,1].set_title(f'Explanation Overlay\nPrediction: {prediction}\nConfidence: {confidence:.3f}', 
-                           fontsize=14, fontweight='bold')
-        axes[1,1].axis('off')
-        
-        plt.tight_layout()
-        
-        filename = f"XAI_{prediction}_{confidence:.3f}_{os.path.basename(image_path).split('.')[0]}.png"
-        save_path = os.path.join(save_dir, filename)
-        plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
-        plt.close()
-        
-        print(f"💾 XAI visualization saved: {save_path}")
-    
-    def analyze_multiple_images(self, image_paths: list, max_images: int = 10):
-        print(f"🔍 Generating XAI explanations for {min(len(image_paths), max_images)} images...")
-        
-        explanations = []
-        for i, img_path in enumerate(image_paths[:max_images]):
-            print(f"  {i+1}/{min(len(image_paths), max_images)}: {os.path.basename(img_path)}")
-            explanation = self.generate_explanation_report(img_path)
-            if explanation:
-                explanations.append(explanation)
-        
-        print(f"✅ Generated {len(explanations)} XAI explanations")
-        return explanations
-
-class EnhancedMedicalXAIEngine(MedicalXAIEngine):
-    def __init__(self, model, class_names, background_size=50):
-        super().__init__(model, class_names)
         self.background_size = background_size
         self.shap_explainer = None
         self.lime_explainer = None
         self.background_data = None
         
     def _prepare_background_data(self, sample_images: List[np.ndarray]):
+        """Prepare background data for SHAP (required for DeepExplainer)"""
         if self.background_data is None:
+            # Use a subset of images as background
             self.background_data = np.array(sample_images[:self.background_size])
             print(f"✅ Prepared SHAP background data: {self.background_data.shape}")
         return self.background_data
     
     def initialize_shap_explainer(self, sample_images: List[np.ndarray]):
+        """Initialize SHAP explainer with background data"""
         try:
             background_data = self._prepare_background_data(sample_images)
             
+            # Use DeepExplainer for neural networks
             self.shap_explainer = shap.DeepExplainer(
                 self.model, 
                 background_data
@@ -177,6 +41,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             
         except Exception as e:
             print(f"❌ SHAP initialization failed: {e}")
+            # Fallback to GradientExplainer
             try:
                 self.shap_explainer = shap.GradientExplainer(
                     self.model, 
@@ -187,6 +52,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
                 print(f"❌ GradientExplainer also failed: {e2}")
     
     def initialize_lime_explainer(self):
+        """Initialize LIME explainer for images"""
         try:
             self.lime_explainer = lime.lime_image.LimeImageExplainer()
             print("✅ LIME ImageExplainer initialized successfully!")
@@ -194,19 +60,25 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             print(f"❌ LIME initialization failed: {e}")
     
     def shap_explanation(self, image: np.ndarray, class_index: int = None) -> Dict:
+        """Generate SHAP explanation for an image"""
         if self.shap_explainer is None:
             raise ValueError("SHAP explainer not initialized. Call initialize_shap_explainer first.")
         
+        # Prepare image for SHAP
         image_batch = np.expand_dims(image, axis=0)
         
+        # Get SHAP values
         shap_values = self.shap_explainer.shap_values(image_batch)
         
+        # If multiple classes, select the relevant one
         if isinstance(shap_values, list):
             if class_index is None:
+                # Use predicted class
                 prediction = self.model.predict(image_batch, verbose=0)[0]
                 class_index = np.argmax(prediction)
             shap_values = shap_values[class_index]
         
+        # Create visualization
         shap_visualization = self._create_shap_visualization(image, shap_values[0])
         
         return {
@@ -217,14 +89,19 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         }
     
     def _create_shap_visualization(self, image: np.ndarray, shap_values: np.ndarray) -> plt.Figure:
+        """Create SHAP force plot visualization"""
         fig, axes = plt.subplots(1, 2, figsize=(15, 6))
         
+        # Original image
         axes[0].imshow(image)
         axes[0].set_title('Original Image', fontweight='bold')
         axes[0].axis('off')
         
+        # SHAP values heatmap
+        # Resize SHAP values to match image dimensions
         shap_heatmap = cv2.resize(shap_values, (image.shape[1], image.shape[0]))
         
+        # Take mean across channels for visualization
         if len(shap_heatmap.shape) == 3:
             shap_heatmap = np.mean(shap_heatmap, axis=2)
         
@@ -239,7 +116,9 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         return fig
     
     def _calculate_shap_feature_importance(self, shap_values: np.ndarray) -> Dict:
+        """Calculate feature importance from SHAP values"""
         if len(shap_values.shape) == 3:
+            # For image data, calculate importance per channel/region
             shap_abs = np.abs(shap_values)
             importance = {
                 'total_impact': np.sum(shap_abs),
@@ -259,12 +138,15 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
     
     def lime_explanation(self, image: np.ndarray, top_labels: int = 2, num_features: int = 100, 
                         num_samples: int = 1000) -> Dict:
+        """Generate LIME explanation for an image"""
         if self.lime_explainer is None:
             self.initialize_lime_explainer()
         
         def model_predict(images: np.ndarray) -> np.ndarray:
+            """Wrapper function for LIME"""
             return self.model.predict(images, verbose=0)
         
+        # Generate LIME explanation
         explanation = self.lime_explainer.explain_instance(
             image.astype(np.double),
             model_predict,
@@ -273,6 +155,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             num_samples=num_samples
         )
         
+        # Create visualization
         lime_visualization = self._create_lime_visualization(image, explanation, num_features)
         
         return {
@@ -284,12 +167,15 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         }
     
     def _create_lime_visualization(self, image: np.ndarray, explanation, num_features: int = 100) -> plt.Figure:
+        """Create LIME explanation visualization"""
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
         
+        # Original image
         axes[0].imshow(image)
         axes[0].set_title('Original Image', fontweight='bold')
         axes[0].axis('off')
         
+        # LIME mask for top class
         temp, mask = explanation.get_image_and_mask(
             explanation.top_labels[0],
             positive_only=True,
@@ -300,6 +186,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         axes[1].set_title('LIME Explanation\n(Green = Supporting features)', fontweight='bold')
         axes[1].axis('off')
         
+        # LIME mask showing both positive and negative
         temp, mask = explanation.get_image_and_mask(
             explanation.top_labels[0],
             positive_only=False,
@@ -314,9 +201,11 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         return fig
     
     def _extract_lime_importance(self, explanation, num_features: int = 100) -> Dict:
+        """Extract feature importance from LIME explanation"""
         importance_data = {}
         
         for label in explanation.available_labels():
+            # Get features and their weights for this label
             features_weights = explanation.local_exp[label]
             features_weights_sorted = sorted(features_weights, key=lambda x: abs(x[1]), reverse=True)
             
@@ -330,7 +219,9 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         return importance_data
     
     def comprehensive_explanation(self, image_path: str, save_dir: str = "results/comprehensive_explanations/") -> Dict:
+        """Generate comprehensive explanation using all XAI methods"""
         try:
+            # Load and preprocess image
             image = cv2.imread(image_path)
             if image is None:
                 raise ValueError(f"Could not load image: {image_path}")
@@ -339,12 +230,14 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             processed_image = cv2.resize(original_image, (224, 224))
             processed_image = processed_image.astype(np.float32) / 255.0
             
+            # Get prediction
             pred = self.model.predict(np.expand_dims(processed_image, axis=0), verbose=0)[0]
             predicted_class = np.argmax(pred)
             confidence = pred[predicted_class]
             
             print(f"📊 Prediction: {self.class_names[predicted_class]} ({confidence:.3f})")
             
+            # Generate explanations from all methods
             explanations = {
                 'prediction': self.class_names[predicted_class],
                 'confidence': float(confidence),
@@ -354,17 +247,22 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
                 'lime': None
             }
             
+            # Grad-CAM (from your existing implementation)
             try:
-                grad_cam_heatmap, _ = self.grad_cam(processed_image, class_idx=predicted_class)
+                from src.xai_engine import MedicalXAIEngine
+                basic_xai = MedicalXAIEngine(self.model, self.class_names)
+                grad_cam_heatmap, _ = basic_xai.grad_cam(processed_image, class_idx=predicted_class)
                 explanations['grad_cam'] = {
                     'heatmap': grad_cam_heatmap,
-                    'overlay': self.overlay_heatmap(grad_cam_heatmap, original_image)
+                    'overlay': basic_xai.overlay_heatmap(grad_cam_heatmap, original_image)
                 }
                 print("✅ Grad-CAM explanation generated")
             except Exception as e:
                 print(f"⚠️ Grad-CAM failed: {e}")
             
+            # SHAP explanation
             try:
+                # Need background data for SHAP - use a simple approach
                 background_samples = np.random.normal(0, 1, (10, 224, 224, 3))
                 self.initialize_shap_explainer(background_samples)
                 shap_explanation = self.shap_explanation(processed_image, predicted_class)
@@ -373,6 +271,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             except Exception as e:
                 print(f"⚠️ SHAP failed: {e}")
             
+            # LIME explanation
             try:
                 lime_explanation = self.lime_explanation(processed_image)
                 explanations['lime'] = lime_explanation
@@ -380,6 +279,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             except Exception as e:
                 print(f"⚠️ LIME failed: {e}")
             
+            # Create comprehensive visualization
             self._create_comprehensive_visualization(
                 original_image, processed_image, explanations, image_path, save_dir
             )
@@ -393,30 +293,37 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             return None
     
     def _create_comprehensive_visualization(self, original, processed, explanations, image_path, save_dir):
+        """Create comprehensive visualization with all XAI methods"""
         os.makedirs(save_dir, exist_ok=True)
         
         fig = plt.figure(figsize=(20, 12))
         
+        # Create subplot grid
         gs = fig.add_gridspec(2, 4)
         
+        # Original image
         ax1 = fig.add_subplot(gs[0, 0])
         ax1.imshow(original)
         ax1.set_title('Original X-Ray', fontweight='bold')
         ax1.axis('off')
         
+        # Preprocessed image
         ax2 = fig.add_subplot(gs[0, 1])
         ax2.imshow(processed)
         ax2.set_title('Preprocessed', fontweight='bold')
         ax2.axis('off')
         
+        # Grad-CAM
         if explanations['grad_cam']:
             ax3 = fig.add_subplot(gs[0, 2])
             ax3.imshow(explanations['grad_cam']['overlay'])
             ax3.set_title('Grad-CAM Overlay', fontweight='bold')
             ax3.axis('off')
         
+        # SHAP
         if explanations['shap']:
             ax4 = fig.add_subplot(gs[0, 3])
+            # Recreate SHAP visualization
             shap_values = explanations['shap']['shap_values'][0]
             shap_heatmap = cv2.resize(shap_values, (original.shape[1], original.shape[0]))
             if len(shap_heatmap.shape) == 3:
@@ -427,8 +334,10 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             ax4.set_title('SHAP Values', fontweight='bold')
             ax4.axis('off')
         
+        # LIME
         if explanations['lime']:
             ax5 = fig.add_subplot(gs[1, :2])
+            # Get LIME visualization
             explanation = explanations['lime']['explanation']
             temp, mask = explanation.get_image_and_mask(
                 explanation.top_labels[0],
@@ -440,6 +349,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
             ax5.set_title('LIME Explanation\n(Green=Positive, Red=Negative)', fontweight='bold')
             ax5.axis('off')
         
+        # Prediction and confidence
         ax6 = fig.add_subplot(gs[1, 2:])
         ax6.axis('off')
         prediction_text = f"""
@@ -462,6 +372,7 @@ class EnhancedMedicalXAIEngine(MedicalXAIEngine):
         
         plt.tight_layout()
         
+        # Save with comprehensive filename
         filename = f"COMPREHENSIVE_{explanations['prediction']}_{explanations['confidence']:.3f}_{os.path.basename(image_path).split('.')[0]}.png"
         save_path = os.path.join(save_dir, filename)
         plt.savefig(save_path, dpi=300, bbox_inches='tight', facecolor='white')
