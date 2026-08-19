@@ -91,7 +91,7 @@ Medical AI models can be accurate and still be untrustworthy, because clinicians
 
 ```bash
 # Clone the repo
-git clone https://github.com/<your-username>/medical_xai.git
+git clone https://github.com/7Navneet7/medical_xai.git
 cd medical_xai
 
 # Create and activate a virtual environment
