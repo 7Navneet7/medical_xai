@@ -8,3 +8,6 @@ venv/
 miniconda3/
 chest-xray-pneumonia.zip
 chest_xray/
+data/
+models/*.h5
+results/
