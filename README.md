@@ -12,6 +12,26 @@ An AI system that detects pneumonia from chest X-rays **and explains why** — u
 
 ---
 
+## 📸 Interface & Explanations
+
+### Application Dashboard
+<p align="center">
+  <img src="screenshots/upload.png" width="48%" alt="Upload View" />
+  <img src="screenshots/full_explanation.png" width="48%" alt="Full Dashboard View" />
+</p>
+
+### XAI Method Output Comparisons
+<p align="center">
+  <img src="screenshots/gradcam_heatmap.png" width="31%" alt="GradCAM Heatmap" />
+  <img src="screenshots/gradcam_overlay.png" width="31%" alt="GradCAM Overlay" />
+  <img src="screenshots/lime_explanation.png" width="31%" alt="LIME Explanation" />
+</p>
+<p align="center">
+  <img src="screenshots/shap_analysis.png" width="50%" alt="SHAP Analysis" />
+</p>
+
+---
+
 ## Table of Contents
 - [Why This Project](#why-this-project)
 - [Features](#features)
@@ -43,6 +63,8 @@ Medical AI models can be accurate and still be untrustworthy, because clinicians
 - **Streamlit interface** — drag-and-drop upload, tabbed views per XAI method, cached model loading for responsiveness
 
 ## Architecture
+
+
 
 ```
                     ┌─────────────────────────┐
